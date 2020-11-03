@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net"
+	"sync"
 	"time"
 
 	"golang.org/x/crypto/ssh"
@@ -121,6 +122,11 @@ func installDrivers(piper *ssh.PiperConfig, config *piperdConfig, logger *log.Lo
 	return bigbro, nil
 }
 
+
+
+
+
+
 func startPiper(config *piperdConfig, logger *log.Logger) error {
 
 	logger.Println("sshpiper is about to start")
@@ -144,14 +150,6 @@ func startPiper(config *piperdConfig, logger *log.Logger) error {
 		return err
 	}
 
-	piper.AddHostKey(private)
-
-	listener, err := net.Listen("tcp", fmt.Sprintf("%s:%d", config.ListenAddr, config.Port))
-	if err != nil {
-		return fmt.Errorf("failed to listen for connection: %v", err)
-	}
-	defer listener.Close()
-
 	// banner
 	if config.BannerFile != "" {
 
@@ -171,6 +169,14 @@ func startPiper(config *piperdConfig, logger *log.Logger) error {
 			return config.BannerText + "\n"
 		}
 	}
+
+	piper.AddHostKey(private)
+
+	listener, err := net.Listen("tcp", fmt.Sprintf("%s:%d", config.ListenAddr, config.Port))
+	if err != nil {
+		return fmt.Errorf("failed to listen for connection: %v", err)
+	}
+	defer listener.Close()
 
 	logger.Printf("sshpiperd started")
 
@@ -230,4 +236,161 @@ func startPiper(config *piperdConfig, logger *log.Logger) error {
 			logger.Printf("connection from %v closed reason: %v", c.RemoteAddr(), err)
 		}(conn)
 	}
+}
+
+
+
+
+
+
+
+type Server struct {
+	listener net.Listener
+	quit     chan interface{}
+	wg       sync.WaitGroup
+}
+
+func NewServer(config *piperdConfig, logger *log.Logger) *Server {
+	s := &Server{
+		quit: make(chan interface{}),
+	}
+	l, err := net.Listen("tcp", fmt.Sprintf("%s:%d", config.ListenAddr, config.Port))
+	if err != nil {
+		logger.Fatal(err)
+	}
+
+	logger.Println("parse Config")
+	piper := &ssh.PiperConfig{}
+
+	logger.Println("installDrivers")
+	bigbro, err := installDrivers(piper, config, logger)
+	if err != nil {
+		select {
+		case <-s.quit:
+			log.Fatal(err)
+		default:
+			log.Println("accept error", err)
+		}
+	}
+
+	logger.Println("ReadFile PiperKeyFile")
+	privateBytes, err := ioutil.ReadFile(config.PiperKeyFile)
+	if err != nil {
+		select {
+		case <-s.quit:
+			log.Fatal(err)
+		default:
+			log.Println("accept error", err)
+		}
+	}
+
+	logger.Println("ParsePrivateKey")
+	private, err := ssh.ParsePrivateKey(privateBytes)
+	if err != nil {
+		select {
+		case <-s.quit:
+			log.Fatal(err)
+		default:
+			log.Println("accept error", err)
+		}
+	}
+
+	piper.AddHostKey(private)
+
+
+	s.listener = l
+	s.wg.Add(1)
+	logger.Println("sshpiper is about to serve")
+	go s.serve(config, logger, piper, bigbro)
+	logger.Println("Served")
+	return s
+}
+
+func (s *Server) Stop(logger *log.Logger) {
+	logger.Println("Stopping", s.wg)
+
+	logger.Println("Send close signal", s.wg)
+	close(s.quit)
+
+	logger.Println("Stop listening", s.wg)
+	s.listener.Close()
+
+	logger.Println("Wait for wait groups", s.wg)
+	s.wg.Wait()
+
+	logger.Println("Stopped", s.wg)
+}
+
+func (s *Server) serve(config *piperdConfig, logger *log.Logger, piper *ssh.PiperConfig, bigbro auditor.Provider) {
+	log.Println("defer Done")
+	defer s.wg.Done()
+
+	for {
+		conn, err := s.listener.Accept()
+		logger.Println("listener Accepting")
+
+		if err != nil {
+			select {
+			case <-s.quit:
+				log.Println("QUIT RECEIVED")
+				return
+			default:
+				log.Println("accept error", err)
+			}
+		} else {
+			s.wg.Add(1)
+			go func() {
+				s.handleConnection(conn, piper, bigbro, config)
+				s.wg.Done()
+			}()
+		}
+	}
+}
+
+func (s *Server) handleConnection(conn net.Conn, piper *ssh.PiperConfig, bigbro auditor.Provider, config *piperdConfig) {
+	defer conn.Close()
+
+	log.Println("handleConnection")
+	pipec := make(chan *ssh.PiperConn, 0)
+	errorc := make(chan error, 0)
+
+	go func() {
+		p, err := ssh.NewSSHPiperConn(conn, piper)
+
+		if err != nil {
+			errorc <- err
+			return
+		}
+
+		pipec <- p
+	}()
+
+	var p *ssh.PiperConn
+
+	select {
+	case p = <-pipec:
+	case err := <-errorc:
+		log.Printf("connection from %v establishing failed reason: %v", conn.RemoteAddr(), err)
+		return
+	case <-time.After(config.LoginGraceTime):
+		log.Printf("pipe establishing timeout, disconnected connection from %v", conn.RemoteAddr())
+		return
+	}
+
+	defer p.Close()
+
+	if bigbro != nil {
+		a, err := bigbro.Create(p.DownstreamConnMeta())
+		if err != nil {
+			log.Printf("connection from %v failed to create auditor reason: %v", conn.RemoteAddr(), err)
+			return
+		}
+		defer a.Close()
+
+		p.HookUpstreamMsg = a.GetUpstreamHook()
+		p.HookDownstreamMsg = a.GetDownstreamHook()
+	}
+
+	err := p.Wait()
+	log.Printf("connection from %v closed reason: %v", conn.RemoteAddr(), err)
 }

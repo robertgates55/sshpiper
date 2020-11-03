@@ -2,12 +2,14 @@ package main
 
 import (
 	"fmt"
+	"github.com/gokyle/sshkey"
+	"github.com/jessevdk/go-flags"
 	"io/ioutil"
 	"log"
 	"os"
-
-	"github.com/gokyle/sshkey"
-	"github.com/jessevdk/go-flags"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/tg123/sshpiper/sshpiperd/auditor"
 	"github.com/tg123/sshpiper/sshpiperd/challenger"
@@ -78,6 +80,7 @@ func populateFromConfig(ini *flags.IniParser, data interface{}, longopt string) 
 }
 
 func main() {
+
 
 	parser := flags.NewNamedParser("sshpiperd", flags.Default)
 	parser.LongDescription = "SSH Piper works as a proxy-like ware, and route connections by username, src ip , etc. Please see <https://github.com/tg123/sshpiper> for more information"
@@ -221,7 +224,26 @@ func main() {
 				}
 			}
 
-			return startPiper(&config.piperdConfig, config.createLogger())
+			s := NewServer(&config.piperdConfig, config.createLogger())
+
+			killSignal := make(chan os.Signal, 1)
+			signal.Notify(killSignal, os.Interrupt, syscall.SIGTERM)
+			go func() {
+				for {
+					time.Sleep(5 * time.Minute)
+				}
+			}()
+			<- killSignal
+
+			logger := config.createLogger()
+			s.Stop(logger)
+			s.wg.Wait()
+			return nil
+
+
+
+
+			//return startPiper(&config.piperdConfig, config.createLogger())
 		}})
 		c.SubcommandsOptional = true
 
