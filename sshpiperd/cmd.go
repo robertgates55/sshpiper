@@ -237,11 +237,11 @@ func main() {
 
 			logger := config.createLogger()
 
-			server := NewServer(&config.piperdConfig, logger)
+			server, err := NewServer(&config.piperdConfig, logger)
 
 			<-done
 			server.stop(logger)
-			return nil
+			return err
 		}})
 		c.SubcommandsOptional = true
 
