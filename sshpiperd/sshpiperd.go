@@ -31,7 +31,14 @@ type piperdConfig struct {
 	BannerFile string `long:"banner-file" description:"Display a banner from file before authentication" env:"SSHPIPERD_BANNERFILE" ini-name:"banner-file" `
 }
 
+type Server struct {
+	listener net.Listener
+	quit     chan interface{}
+	wg       sync.WaitGroup
+}
+
 func getAndInstall(reg, name string, get func(n string) registry.Plugin, install func(plugin registry.Plugin) error, logger *log.Logger) error {
+	log.Println("GET AND INSTALL", name)
 	if name == "" {
 		return nil
 	}
@@ -118,136 +125,8 @@ func installDrivers(piper *ssh.PiperConfig, config *piperdConfig, logger *log.Lo
 			return nil, err
 		}
 	}
-
+	log.Println("BIGBRO")
 	return bigbro, nil
-}
-
-
-
-
-
-
-func startPiper(config *piperdConfig, logger *log.Logger) error {
-
-	logger.Println("sshpiper is about to start")
-
-	piper := &ssh.PiperConfig{}
-
-	// drivers
-	bigbro, err := installDrivers(piper, config, logger)
-	if err != nil {
-		return err
-	}
-
-	// listeners
-	privateBytes, err := ioutil.ReadFile(config.PiperKeyFile)
-	if err != nil {
-		return err
-	}
-
-	private, err := ssh.ParsePrivateKey(privateBytes)
-	if err != nil {
-		return err
-	}
-
-	// banner
-	if config.BannerFile != "" {
-
-		piper.BannerCallback = func(conn ssh.ConnMetadata) string {
-
-			msg, err := ioutil.ReadFile(config.BannerFile)
-
-			if err != nil {
-				logger.Printf("failed to read banner file: %v", err)
-				return ""
-			}
-
-			return string(msg)
-		}
-	} else if config.BannerText != "" {
-		piper.BannerCallback = func(conn ssh.ConnMetadata) string {
-			return config.BannerText + "\n"
-		}
-	}
-
-	piper.AddHostKey(private)
-
-	listener, err := net.Listen("tcp", fmt.Sprintf("%s:%d", config.ListenAddr, config.Port))
-	if err != nil {
-		return fmt.Errorf("failed to listen for connection: %v", err)
-	}
-	defer listener.Close()
-
-	logger.Printf("sshpiperd started")
-
-	for {
-		conn, err := listener.Accept()
-		if err != nil {
-			logger.Printf("failed to accept connection: %v", err)
-			continue
-		}
-
-		logger.Printf("connection accepted: %v", conn.RemoteAddr())
-
-		go func(c net.Conn) {
-			defer c.Close()
-
-			pipec := make(chan *ssh.PiperConn, 0)
-			errorc := make(chan error, 0)
-
-			go func() {
-				p, err := ssh.NewSSHPiperConn(c, piper)
-
-				if err != nil {
-					errorc <- err
-					return
-				}
-
-				pipec <- p
-			}()
-
-			var p *ssh.PiperConn
-
-			select {
-			case p = <-pipec:
-			case err := <-errorc:
-				logger.Printf("connection from %v establishing failed reason: %v", c.RemoteAddr(), err)
-				return
-			case <-time.After(config.LoginGraceTime):
-				logger.Printf("pipe establishing timeout, disconnected connection from %v", c.RemoteAddr())
-				return
-			}
-
-			defer p.Close()
-
-			if bigbro != nil {
-				a, err := bigbro.Create(p.DownstreamConnMeta())
-				if err != nil {
-					logger.Printf("connection from %v failed to create auditor reason: %v", c.RemoteAddr(), err)
-					return
-				}
-				defer a.Close()
-
-				p.HookUpstreamMsg = a.GetUpstreamHook()
-				p.HookDownstreamMsg = a.GetDownstreamHook()
-			}
-
-			err = p.Wait()
-			logger.Printf("connection from %v closed reason: %v", c.RemoteAddr(), err)
-		}(conn)
-	}
-}
-
-
-
-
-
-
-
-type Server struct {
-	listener net.Listener
-	quit     chan interface{}
-	wg       sync.WaitGroup
 }
 
 func NewServer(config *piperdConfig, logger *log.Logger) *Server {
@@ -259,10 +138,9 @@ func NewServer(config *piperdConfig, logger *log.Logger) *Server {
 		logger.Fatal(err)
 	}
 
-	logger.Println("parse Config")
+	s.listener = l
 	piper := &ssh.PiperConfig{}
 
-	logger.Println("installDrivers")
 	bigbro, err := installDrivers(piper, config, logger)
 	if err != nil {
 		select {
@@ -273,7 +151,6 @@ func NewServer(config *piperdConfig, logger *log.Logger) *Server {
 		}
 	}
 
-	logger.Println("ReadFile PiperKeyFile")
 	privateBytes, err := ioutil.ReadFile(config.PiperKeyFile)
 	if err != nil {
 		select {
@@ -284,7 +161,6 @@ func NewServer(config *piperdConfig, logger *log.Logger) *Server {
 		}
 	}
 
-	logger.Println("ParsePrivateKey")
 	private, err := ssh.ParsePrivateKey(privateBytes)
 	if err != nil {
 		select {
@@ -297,42 +173,22 @@ func NewServer(config *piperdConfig, logger *log.Logger) *Server {
 
 	piper.AddHostKey(private)
 
-
-	s.listener = l
 	s.wg.Add(1)
-	logger.Println("sshpiper is about to serve")
-	go s.serve(config, logger, piper, bigbro)
-	logger.Println("Served")
+	go s.serve(piper, config, bigbro, logger)
+
 	return s
 }
 
-func (s *Server) Stop(logger *log.Logger) {
-	logger.Println("Stopping", s.wg)
-
-	logger.Println("Send close signal", s.wg)
-	close(s.quit)
-
-	logger.Println("Stop listening", s.wg)
-	s.listener.Close()
-
-	logger.Println("Wait for wait groups", s.wg)
-	s.wg.Wait()
-
-	logger.Println("Stopped", s.wg)
-}
-
-func (s *Server) serve(config *piperdConfig, logger *log.Logger, piper *ssh.PiperConfig, bigbro auditor.Provider) {
+func (s *Server) serve(piper *ssh.PiperConfig, config *piperdConfig, bigbro auditor.Provider, logger *log.Logger) {
 	log.Println("defer Done")
 	defer s.wg.Done()
 
 	for {
 		conn, err := s.listener.Accept()
-		logger.Println("listener Accepting")
 
 		if err != nil {
 			select {
 			case <-s.quit:
-				log.Println("QUIT RECEIVED")
 				return
 			default:
 				log.Println("accept error", err)
@@ -340,17 +196,16 @@ func (s *Server) serve(config *piperdConfig, logger *log.Logger, piper *ssh.Pipe
 		} else {
 			s.wg.Add(1)
 			go func() {
-				s.handleConnection(conn, piper, bigbro, config)
+				s.handleConnection(conn, piper, config, bigbro, logger)
 				s.wg.Done()
 			}()
 		}
 	}
 }
 
-func (s *Server) handleConnection(conn net.Conn, piper *ssh.PiperConfig, bigbro auditor.Provider, config *piperdConfig) {
+func (s *Server) handleConnection(conn net.Conn, piper *ssh.PiperConfig, config *piperdConfig, bigbro auditor.Provider, logger *log.Logger) {
 	defer conn.Close()
 
-	log.Println("handleConnection")
 	pipec := make(chan *ssh.PiperConn, 0)
 	errorc := make(chan error, 0)
 
@@ -370,10 +225,10 @@ func (s *Server) handleConnection(conn net.Conn, piper *ssh.PiperConfig, bigbro 
 	select {
 	case p = <-pipec:
 	case err := <-errorc:
-		log.Printf("connection from %v establishing failed reason: %v", conn.RemoteAddr(), err)
+		logger.Printf("connection from %v establishing failed reason: %v", conn.RemoteAddr(), err)
 		return
 	case <-time.After(config.LoginGraceTime):
-		log.Printf("pipe establishing timeout, disconnected connection from %v", conn.RemoteAddr())
+		logger.Printf("pipe establishing timeout, disconnected connection from %v", conn.RemoteAddr())
 		return
 	}
 
@@ -382,7 +237,7 @@ func (s *Server) handleConnection(conn net.Conn, piper *ssh.PiperConfig, bigbro 
 	if bigbro != nil {
 		a, err := bigbro.Create(p.DownstreamConnMeta())
 		if err != nil {
-			log.Printf("connection from %v failed to create auditor reason: %v", conn.RemoteAddr(), err)
+			logger.Printf("connection from %v failed to create auditor reason: %v", conn.RemoteAddr(), err)
 			return
 		}
 		defer a.Close()
@@ -392,5 +247,16 @@ func (s *Server) handleConnection(conn net.Conn, piper *ssh.PiperConfig, bigbro 
 	}
 
 	err := p.Wait()
-	log.Printf("connection from %v closed reason: %v", conn.RemoteAddr(), err)
+	logger.Printf("connection from %v closed reason: %v", conn.RemoteAddr(), err)
+}
+
+func (s *Server) stop(logger *log.Logger) {
+	logger.Println("Close quit signal channel")
+	close(s.quit)
+
+	logger.Println("Stop listening - no new connections")
+	s.listener.Close()
+
+	logger.Println("Waiting for active connections to complete")
+	s.wg.Wait()
 }

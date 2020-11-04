@@ -1,6 +1,7 @@
 package registry
 
 import (
+	"log"
 	"sort"
 	"sync"
 )

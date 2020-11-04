@@ -4,17 +4,15 @@ import (
 	"fmt"
 	"github.com/gokyle/sshkey"
 	"github.com/jessevdk/go-flags"
+	"github.com/tg123/sshpiper/sshpiperd/auditor"
+	"github.com/tg123/sshpiper/sshpiperd/challenger"
+	"github.com/tg123/sshpiper/sshpiperd/registry"
+	"github.com/tg123/sshpiper/sshpiperd/upstream"
 	"io/ioutil"
 	"log"
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
-
-	"github.com/tg123/sshpiper/sshpiperd/auditor"
-	"github.com/tg123/sshpiper/sshpiperd/challenger"
-	"github.com/tg123/sshpiper/sshpiperd/registry"
-	"github.com/tg123/sshpiper/sshpiperd/upstream"
 )
 
 type subCommand struct{ callback func(args []string) error }
@@ -224,26 +222,27 @@ func main() {
 				}
 			}
 
-			s := NewServer(&config.piperdConfig, config.createLogger())
+			sigs := make(chan os.Signal, 1)
+			done := make(chan bool, 1)
 
-			killSignal := make(chan os.Signal, 1)
-			signal.Notify(killSignal, os.Interrupt, syscall.SIGTERM)
+			signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
+
 			go func() {
-				for {
-					time.Sleep(5 * time.Minute)
-				}
+				sig := <-sigs
+				fmt.Println()
+				fmt.Println(sig)
+				done <- true
 			}()
-			<- killSignal
 
 			logger := config.createLogger()
-			s.Stop(logger)
-			s.wg.Wait()
+
+			fmt.Println("NewServer")
+			server := NewServer(&config.piperdConfig, logger)
+
+			<-done
+			fmt.Println("Done")
+			server.stop(logger)
 			return nil
-
-
-
-
-			//return startPiper(&config.piperdConfig, config.createLogger())
 		}})
 		c.SubcommandsOptional = true
 

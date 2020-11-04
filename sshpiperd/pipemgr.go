@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"github.com/tg123/sshpiper/sshpiperd/upstream"
+	"log"
 	"os"
 	"text/template"
 )
