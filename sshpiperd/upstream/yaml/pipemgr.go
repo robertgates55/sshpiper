@@ -3,10 +3,9 @@ package yaml
 import (
 	"bytes"
 	"fmt"
-	"io/ioutil"
-
 	"github.com/tg123/sshpiper/sshpiperd/upstream"
 	"gopkg.in/yaml.v3"
+	"io/ioutil"
 )
 
 // Return All pipes inside upstream
@@ -47,7 +46,6 @@ func (p *plugin) ListPipe() ([]upstream.Pipe, error) {
 			Username:         pipe.Username,
 		})
 	}
-
 	return pipes, nil
 }
 
@@ -190,7 +188,6 @@ func (p *plugin) CreatePipe(opt upstream.CreatePipeOption) error {
 	}
 
 	// append
-
 	{
 		t, err := toYamlNode(toPipeConfig(opt))
 		if err != nil {

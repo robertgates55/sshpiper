@@ -2,17 +2,19 @@ package main
 
 import (
 	"fmt"
-	"github.com/gokyle/sshkey"
-	"github.com/jessevdk/go-flags"
-	"github.com/tg123/sshpiper/sshpiperd/auditor"
-	"github.com/tg123/sshpiper/sshpiperd/challenger"
-	"github.com/tg123/sshpiper/sshpiperd/registry"
-	"github.com/tg123/sshpiper/sshpiperd/upstream"
 	"io/ioutil"
 	"log"
 	"os"
 	"os/signal"
 	"syscall"
+
+	"github.com/gokyle/sshkey"
+	"github.com/jessevdk/go-flags"
+
+	"github.com/tg123/sshpiper/sshpiperd/auditor"
+	"github.com/tg123/sshpiper/sshpiperd/challenger"
+	"github.com/tg123/sshpiper/sshpiperd/registry"
+	"github.com/tg123/sshpiper/sshpiperd/upstream"
 )
 
 type subCommand struct{ callback func(args []string) error }
@@ -78,7 +80,6 @@ func populateFromConfig(ini *flags.IniParser, data interface{}, longopt string) 
 }
 
 func main() {
-
 
 	parser := flags.NewNamedParser("sshpiperd", flags.Default)
 	parser.LongDescription = "SSH Piper works as a proxy-like ware, and route connections by username, src ip , etc. Please see <https://github.com/tg123/sshpiper> for more information"
@@ -236,11 +237,9 @@ func main() {
 
 			logger := config.createLogger()
 
-			fmt.Println("NewServer")
 			server := NewServer(&config.piperdConfig, logger)
 
 			<-done
-			fmt.Println("Done")
 			server.stop(logger)
 			return nil
 		}})

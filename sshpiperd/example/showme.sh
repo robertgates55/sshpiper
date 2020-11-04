@@ -13,6 +13,8 @@ if [ ! -f $BASEDIR/sshpiperd_key ];then
     $SSHPIPERD_BIN genkey > $BASEDIR/sshpiperd_key
 fi
 
+
+
 $SSHPIPERD_BIN pipe --upstream-workingdir=$BASEDIR/workingdir add -n github -u github.com --upstream-user git 2>/dev/null
 $SSHPIPERD_BIN pipe --upstream-workingdir=$BASEDIR/workingdir add -n gitlab -u gitlab.com --upstream-user git 2>/dev/null
 $SSHPIPERD_BIN pipe --upstream-workingdir=$BASEDIR/workingdir add -n bitbucket -u bitbucket.org --upstream-user git 2>/dev/null

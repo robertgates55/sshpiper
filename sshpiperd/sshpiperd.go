@@ -38,7 +38,6 @@ type Server struct {
 }
 
 func getAndInstall(reg, name string, get func(n string) registry.Plugin, install func(plugin registry.Plugin) error, logger *log.Logger) error {
-	log.Println("GET AND INSTALL", name)
 	if name == "" {
 		return nil
 	}
@@ -125,7 +124,6 @@ func installDrivers(piper *ssh.PiperConfig, config *piperdConfig, logger *log.Lo
 			return nil, err
 		}
 	}
-	log.Println("BIGBRO")
 	return bigbro, nil
 }
 
@@ -180,7 +178,6 @@ func NewServer(config *piperdConfig, logger *log.Logger) *Server {
 }
 
 func (s *Server) serve(piper *ssh.PiperConfig, config *piperdConfig, bigbro auditor.Provider, logger *log.Logger) {
-	log.Println("defer Done")
 	defer s.wg.Done()
 
 	for {
